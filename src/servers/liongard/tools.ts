@@ -20,7 +20,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Env } from "../../types";
 import { type McpProps, callerId } from "../../mcp/props";
-import { liongard, assertReadOnly } from "./client";
+import { liongard, assertReadOnly, assertPassthroughAllowed } from "./client";
 import {
   ListEnvironmentsInput, ListInspectorsInput, ListMetricsInput, ListSystemsInput,
   MetricValuesInput, RequestInput, SystemSectionInput, SystemSectionsInput,
@@ -377,11 +377,14 @@ export function registerLiongardTools(server: McpServer, env: Env, props: McpPro
     {
       title: "Liongard API passthrough (read-only)",
       description:
-        "Call any Liongard read endpoint the typed tools do not cover: launchpoints, agents, " +
-        "detections, alerts, timeline, groups, users, environment groups, asset inventory, and " +
-        "anything Liongard adds later. GET is open; POST is permitted only on Liongard's " +
-        "query-shaped read endpoints. Writes, deletes, and the access-key and authentication " +
-        "surfaces are refused. Array parameters must be comma-joined in one string, because " +
+        "Call Liongard read endpoints the typed tools do not cover: agents, groups, users, " +
+        "environment groups, detections, timeline queries and asset inventory. Restricted to an " +
+        "allow-list of bounded endpoints. Unbounded collections such as /api/v1/tasks/ and " +
+        "/api/v1/launchpoints/ are NOT reachable here, because on this instance they run to 20 MB " +
+        "or more and would exhaust the Worker before any size cap applied. Prefer a typed tool " +
+        "where one exists. GET is open; POST is permitted only on Liongard's query-shaped read " +
+        "endpoints. Writes, deletes, and the access-key and authentication surfaces are refused. " +
+        "Array parameters must be comma-joined in one string, because " +
         "Liongard returns a generic 500 for repeated params.",
       inputSchema: RequestInput,
       annotations: READ_ONLY,
@@ -389,6 +392,7 @@ export function registerLiongardTools(server: McpServer, env: Env, props: McpPro
     async (args) => {
       try {
         assertReadOnly(args.method, args.path);
+        assertPassthroughAllowed(args.path);
         const { data, bytes } = await liongard<unknown>(
           env, args.method, args.path,
           { params: args.params, body: args.body },

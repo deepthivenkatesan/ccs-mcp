@@ -34,7 +34,8 @@ shared environment.
 
 **`main` is protected by convention, not by GitHub.** Branch protection is not
 enforced on private repos under a personal account, so rulesets here save but
-stay inactive. Work on `stage`; Matt does the `main` merges.
+stay inactive. `stage` is the default branch so clones and pull requests target
+it by default. Work on `stage`; Deepthi merges to `main`.
 
 ## Deploying
 

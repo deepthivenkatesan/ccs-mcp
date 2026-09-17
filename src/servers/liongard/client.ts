@@ -81,6 +81,67 @@ const POST_READ_ALLOWLIST: RegExp[] = [
  */
 const DENY: RegExp[] = [/\/access-keys/i, /\/authentication\//i, /\/webhooks/i];
 
+/**
+ * Paths the GENERIC PASSTHROUGH may reach. Default-deny, and deliberately
+ * narrower than what the typed tools are allowed to call.
+ *
+ * Rationale, measured against the CCS instance (us3) on 2026-09-17:
+ *   /api/v1/tasks/        23.5 MB across 4,498 records
+ *   /api/v1/launchpoints/ 21.1 MB across 9,016 records
+ *
+ * Those are roughly 2.5x the sizes the Platinum handover recorded. A typed
+ * tool's size cap trims the RESPONSE, but the Worker still has to fetch and
+ * parse the whole payload first, so an unfiltered passthrough GET against
+ * either endpoint is a plausible way to exhaust the isolate. The typed tools
+ * never touch them; only the passthrough could, so the passthrough is where
+ * the restriction belongs.
+ *
+ * Cost of default-deny, stated plainly: endpoints Liongard adds later are NOT
+ * reachable until added here. That is the deliberate trade — a new entry is a
+ * one-line change, an out-of-memory Worker in production is not.
+ */
+const PASSTHROUGH_ALLOWLIST: RegExp[] = [
+  // Bounded collections, all measured under 100 KB.
+  /^\/api\/v1\/agents\/?$/,
+  /^\/api\/v1\/groups\/?$/,
+  /^\/api\/v1\/users\/?$/,
+  /^\/api\/v1\/environments\/?$/,
+  /^\/api\/v1\/inspectors\/?$/,
+  /^\/api\/v2\/environments\/?$/,
+  /^\/api\/v2\/environment-groups\/?$/,
+  /^\/api\/v2\/metrics\/?$/,
+  // Per-resource reads: scoped to one record, so bounded by construction.
+  /^\/api\/v1\/systems\/\d+(\/.*)?$/,
+  /^\/api\/v1\/environments\/\d+(\/.*)?$/,
+  /^\/api\/v1\/inspectors\/\d+(\/.*)?$/,
+  /^\/api\/v1\/agents\/\d+(\/.*)?$/,
+  /^\/api\/v2\/environments\/\d+(\/.*)?$/,
+  // Query-shaped reads: bounded by the filter in the request body.
+  /^\/api\/v1\/metrics\/bulk\/?$/,
+  /^\/api\/v2\/metrics\/evaluate(\/.*)?$/,
+  /^\/api\/v2\/dataprints\/evaluate\/\d+\/?$/,
+  /^\/api\/v2\/detections\/?$/,
+  /^\/api\/v2\/timelines\/query\/?$/,
+  /^\/api\/v2\/inventory\/identities\/query\/?$/,
+  /^\/api\/v2\/inventory\/device-profiles\/query\/?$/,
+];
+
+/**
+ * Applies to the generic passthrough only. Typed tools call assertReadOnly
+ * directly, because they legitimately read large collections under their own
+ * size caps and filtering.
+ */
+export function assertPassthroughAllowed(path: string): void {
+  if (PASSTHROUGH_ALLOWLIST.some((re) => re.test(path))) return;
+  throw new Error(
+    `Path ${path} is not available through the passthrough. The passthrough is restricted to an ` +
+      `allow-list of bounded endpoints, because unbounded collection reads on this instance run to ` +
+      `20 MB or more and can exhaust the Worker. Use a typed tool if one covers this data ` +
+      `(systems, metrics, dataprint sections and environments all have one), or ask for the path ` +
+      `to be added to the allow-list in src/servers/liongard/client.ts.`,
+  );
+}
+
 export function assertReadOnly(method: string, path: string): void {
   if (DENY.some((re) => re.test(path))) {
     throw new Error(
@@ -95,6 +156,12 @@ export function assertReadOnly(method: string, path: string): void {
 }
 
 export type LgResult<T> = { data: T; bytes: number };
+
+/**
+ * Hard ceiling on any single Liongard response. See the guard in liongard()
+ * for the measurements behind this number.
+ */
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 export async function liongard<T = unknown>(
   env: Env,
@@ -125,6 +192,27 @@ export async function liongard<T = unknown>(
     headers: roarHeaders(env),
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
+
+  // Refuse oversized payloads BEFORE reading the body into memory. Trimming
+  // after the fact protects the conversation but not the isolate: the Worker
+  // has already materialised the whole document by then. Measured on us3,
+  // 2026-09-17: /api/v1/tasks/ is 23.5 MB and /api/v1/launchpoints/ is 21.1 MB,
+  // while the largest endpoint any typed tool legitimately reads is
+  // /api/v1/metrics/ at 5.7 MB. The ceiling sits above the latter with
+  // headroom and well below the former.
+  //
+  // Caveat worth knowing: a chunked response carries no content-length, so
+  // this guard cannot fire on one. It is a cheap backstop, not a proof.
+  const declaredLength = Number(res.headers.get("content-length") ?? NaN);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
+    throw new Error(
+      `Liongard ${method} ${path} declared ${Math.round(declaredLength / 1024 / 1024)} MB, over the ` +
+        `${Math.round(MAX_RESPONSE_BYTES / 1024 / 1024)} MB ceiling, so it was refused without being read. ` +
+        `Narrow the request: filter by environment or inspector, use a typed tool, or read one ` +
+        `dataprint section rather than a whole collection.`,
+    );
+  }
+
   const text = await res.text();
   if (!res.ok) {
     // Only offer the array-param explanation when the request actually carried
