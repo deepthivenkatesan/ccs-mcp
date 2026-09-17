@@ -1,0 +1,52 @@
+{
+	// Top level is PRODUCTION. `wrangler deploy` with no --env targets this.
+	"name": "ccs-mcp",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-08-01",
+	"observability": { "enabled": true },
+
+	"kv_namespaces": [
+		{ "binding": "OAUTH_KV", "id": "48bf5cfa35c44256b6b636f00d3880a2" },
+		{ "binding": "PENDING_AUTH_KV", "id": "dc038e458f8c4a0184a8e1d4344c5737" }
+	],
+
+	"vars": {
+		"ENVIRONMENT": "production",
+		"ACCESS_OIDC_CLIENT_ID": "fef5759e2e81699a5d161a1910041f42ede0d1a058034d7800d9e05d80e24310",
+		"ACCESS_OIDC_ISSUER": "https://ccstech.cloudflareaccess.com/cdn-cgi/access/sso/oidc/fef5759e2e81699a5d161a1910041f42ede0d1a058034d7800d9e05d80e24310",
+		"ACCESS_OIDC_AUTHORIZATION_URL": "https://ccstech.cloudflareaccess.com/cdn-cgi/access/sso/oidc/fef5759e2e81699a5d161a1910041f42ede0d1a058034d7800d9e05d80e24310/authorization",
+		"ACCESS_OIDC_TOKEN_URL": "https://ccstech.cloudflareaccess.com/cdn-cgi/access/sso/oidc/fef5759e2e81699a5d161a1910041f42ede0d1a058034d7800d9e05d80e24310/token",
+		"ACCESS_OIDC_JWKS_URL": "https://ccstech.cloudflareaccess.com/cdn-cgi/access/sso/oidc/fef5759e2e81699a5d161a1910041f42ede0d1a058034d7800d9e05d80e24310/jwks",
+		"GATEWAY_BASE_URL": "https://ccs-mcp.ccstech.workers.dev",
+		"ALLOWED_EMAIL_DOMAIN": "ccstechnologygroup.com"
+	},
+
+	// Named environments inherit NOTHING from the top level for `vars` and
+	// `kv_namespaces` — both are repeated in full below on purpose. The name
+	// is set explicitly because the default would be "ccs-mcp-staging", and
+	// the Access app's redirect URI is registered against "ccs-mcp-stage".
+	"env": {
+		"staging": {
+			"name": "ccs-mcp-stage",
+
+			// Staging gets its OWN KV pair. Sharing the production pair would
+			// mean an OAuth grant issued by staging is valid against
+			// production's store.
+			"kv_namespaces": [
+				{ "binding": "OAUTH_KV", "id": "9011dd2f129f4851baf0054cac52bb26" },
+				{ "binding": "PENDING_AUTH_KV", "id": "8d929a012e8845048ccebf0c414f6c29" }
+			],
+
+			"vars": {
+				"ENVIRONMENT": "staging",
+				"ACCESS_OIDC_CLIENT_ID": "fef5759e2e81699a5d161a1910041f42ede0d1a058034d7800d9e05d80e24310",
+				"ACCESS_OIDC_ISSUER": "https://ccstech.cloudflareaccess.com/cdn-cgi/access/sso/oidc/fef5759e2e81699a5d161a1910041f42ede0d1a058034d7800d9e05d80e24310",
+				"ACCESS_OIDC_AUTHORIZATION_URL": "https://ccstech.cloudflareaccess.com/cdn-cgi/access/sso/oidc/fef5759e2e81699a5d161a1910041f42ede0d1a058034d7800d9e05d80e24310/authorization",
+				"ACCESS_OIDC_TOKEN_URL": "https://ccstech.cloudflareaccess.com/cdn-cgi/access/sso/oidc/fef5759e2e81699a5d161a1910041f42ede0d1a058034d7800d9e05d80e24310/token",
+				"ACCESS_OIDC_JWKS_URL": "https://ccstech.cloudflareaccess.com/cdn-cgi/access/sso/oidc/fef5759e2e81699a5d161a1910041f42ede0d1a058034d7800d9e05d80e24310/jwks",
+				"GATEWAY_BASE_URL": "https://ccs-mcp-stage.ccstech.workers.dev",
+				"ALLOWED_EMAIL_DOMAIN": "ccstechnologygroup.com"
+			}
+		}
+	}
+}
