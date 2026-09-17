@@ -37,4 +37,13 @@ export interface Env {
 
   // Optional allow-list. If set, only emails on this domain complete login.
   ALLOWED_EMAIL_DOMAIN?: string;
+
+  // ---- Liongard connector ----
+  // Origin only; the client appends paths that already begin with /api/.
+  LIONGARD_BASE_URL: string;
+  // Secrets. Sent as X-ROAR-API-KEY: base64(id:secret).
+  // The key inherits the permissions of the Liongard user that minted it, so
+  // the read-only ceiling lives in Liongard's console, not in this code.
+  LIONGARD_ACCESS_KEY_ID: string;
+  LIONGARD_ACCESS_KEY_SECRET: string;
 }

@@ -21,25 +21,51 @@ import type { Env } from "./types";
 import { verifyAccessIdToken } from "./verifyIdToken";
 import { getProps, type AccessProps } from "./mcp/props";
 import { handleMcpRequest, type McpServerDef } from "./mcp/transport";
+import { handleSdkMcpRequest, type SdkServerFactory } from "./mcp/sdkBridge";
 import { createSelftestServer } from "./servers/selftest/server";
+import { createLiongardServer } from "./servers/liongard/server";
 
 // ---------- The registry ----------
 
-interface ConnectorEntry {
+interface ConnectorBase {
   /** URL path this connector is served at, e.g. "/selftest". */
   path: string;
   /** One line, shown on /status. */
   description: string;
-  /** Builds a fresh MCP server per request. */
-  createServer: (env: Env, props: AccessProps) => McpServerDef;
 }
+
+/**
+ * Two kinds of connector can be registered.
+ *
+ * "plain" uses this gateway's lightweight server shape.
+ * "sdk" uses the official MCP SDK's McpServer, which is what connectors handed
+ * over from the Platinum gateway are written against. Hosting both means that
+ * vendor code can land unmodified — see mcp/sdkBridge.ts.
+ */
+type ConnectorEntry =
+  | (ConnectorBase & {
+      kind: "plain";
+      createServer: (env: Env, props: AccessProps) => McpServerDef;
+    })
+  | (ConnectorBase & {
+      kind: "sdk";
+      createServer: SdkServerFactory;
+    });
 
 const REGISTRY: ConnectorEntry[] = [
   {
     path: "/selftest",
+    kind: "plain",
     description:
       "No-vendor health connector. Confirms OAuth, routing and identity without needing a vendor credential.",
     createServer: createSelftestServer,
+  },
+  {
+    path: "/liongard",
+    kind: "sdk",
+    description:
+      "Liongard configuration intelligence, read-only. Environments, systems, dataprint sections and metric values.",
+    createServer: createLiongardServer,
   },
 ];
 
@@ -238,6 +264,12 @@ const apiHandler = {
         },
         { status: 404 }
       );
+    }
+
+    // SDK-based connectors are driven through the bridge; first-party ones
+    // use the lightweight path.
+    if (entry.kind === "sdk") {
+      return handleSdkMcpRequest(request, entry.createServer, env, props);
     }
 
     const server = entry.createServer(env, props);

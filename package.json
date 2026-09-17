@@ -13,7 +13,9 @@
   },
   "license": "UNLICENSED",
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "^0.10.3"
+    "@cloudflare/workers-oauth-provider": "^0.10.3",
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "zod": "^3.25.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260828.1",
