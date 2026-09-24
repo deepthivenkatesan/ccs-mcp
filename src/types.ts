@@ -46,4 +46,15 @@ export interface Env {
   // the read-only ceiling lives in Liongard's console, not in this code.
   LIONGARD_ACCESS_KEY_ID: string;
   LIONGARD_ACCESS_KEY_SECRET: string;
+
+  // ---- Acumatica connector ----
+  // Vars. Origin only, e.g. https://sunoilbahamas-sandbox.acumatica.com, and
+  // the tenant (company) string login expects, e.g. "FOCOL Holdings Ltd".
+  ACUMATICA_BASE_URL: string;
+  ACUMATICA_TENANT: string;
+  // Secrets. The service account's username and password, used for a cookie
+  // session per call (login -> GET -> logout). Its roles, not this code, are
+  // the read-only ceiling at Acumatica.
+  ACUMATICA_USERNAME: string;
+  ACUMATICA_PASSWORD: string;
 }

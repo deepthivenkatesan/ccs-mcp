@@ -19,7 +19,9 @@
 		"ACCESS_OIDC_JWKS_URL": "https://ccstech.cloudflareaccess.com/cdn-cgi/access/sso/oidc/fef5759e2e81699a5d161a1910041f42ede0d1a058034d7800d9e05d80e24310/jwks",
 		"GATEWAY_BASE_URL": "https://ccs-mcp.ccstech.workers.dev",
 		"ALLOWED_EMAIL_DOMAIN": "ccstechnologygroup.com",
-		"LIONGARD_BASE_URL": "https://us3.app.liongard.com"
+		"LIONGARD_BASE_URL": "https://us3.app.liongard.com",
+		"ACUMATICA_BASE_URL": "https://sunoilbahamas-sandbox.acumatica.com",
+		"ACUMATICA_TENANT": "FOCOL Holdings Ltd"
 	},
 
 	// Named environments inherit NOTHING from the top level for `vars` and
@@ -47,7 +49,9 @@
 				"ACCESS_OIDC_JWKS_URL": "https://ccstech.cloudflareaccess.com/cdn-cgi/access/sso/oidc/fef5759e2e81699a5d161a1910041f42ede0d1a058034d7800d9e05d80e24310/jwks",
 				"GATEWAY_BASE_URL": "https://ccs-mcp-stage.ccstech.workers.dev",
 				"ALLOWED_EMAIL_DOMAIN": "ccstechnologygroup.com",
-				"LIONGARD_BASE_URL": "https://us3.app.liongard.com"
+				"LIONGARD_BASE_URL": "https://us3.app.liongard.com",
+				"ACUMATICA_BASE_URL": "https://sunoilbahamas-sandbox.acumatica.com",
+				"ACUMATICA_TENANT": "FOCOL Holdings Ltd"
 			}
 		}
 	}

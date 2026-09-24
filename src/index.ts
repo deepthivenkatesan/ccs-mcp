@@ -24,6 +24,7 @@ import { handleMcpRequest, type McpServerDef } from "./mcp/transport";
 import { handleSdkMcpRequest, type SdkServerFactory } from "./mcp/sdkBridge";
 import { createSelftestServer } from "./servers/selftest/server";
 import { createLiongardServer } from "./servers/liongard/server";
+import { createAcumaticaServer } from "./servers/acumatica/server";
 
 // ---------- The registry ----------
 
@@ -66,6 +67,13 @@ const REGISTRY: ConnectorEntry[] = [
     description:
       "Liongard configuration intelligence, read-only. Environments, systems, dataprint sections and metric values.",
     createServer: createLiongardServer,
+  },
+  {
+    path: "/acumatica",
+    kind: "sdk",
+    description:
+      "Acumatica ERP (FOCOL / Sun Oil sandbox), read-only. Customers, stock items, sales orders, invoices, bills and purchase orders.",
+    createServer: createAcumaticaServer,
   },
 ];
 
