@@ -21,7 +21,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Env } from "../../types";
 import { type McpProps, callerId } from "../../mcp/props";
-import { withSession, flatten, NAME_RE, MAX_TOP, ENDPOINT, VERSION, type Query } from "./client";
+import { withSession, flatten, assertReadOnly, NAME_RE, MAX_TOP, ENDPOINT, VERSION, type Query } from "./client";
 import { ListInput, RequestInput } from "./schemas";
 
 function ok(payload: unknown) {
@@ -154,6 +154,8 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
           if (select) checkFields(select);
           const query: Query = { $top: String(top) };
           if (select) query.$select = select.join(",");
+          // Refuse BEFORE logging in: a refused request must not cost a trial slot.
+          assertReadOnly("GET", t.entity, query);
 
           const { result, logout_status } = await withSession(env, caller, (get) => get<unknown[]>(t.entity, query));
           const records = flatten(result.data);
@@ -196,6 +198,8 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
         if (args.filter) query.$filter = args.filter;
         if (args.expand) query.$expand = args.expand;
         if (args.skip !== undefined) query.$skip = String(args.skip);
+        // Refuse BEFORE logging in: a refused request must not cost a trial slot.
+        assertReadOnly("GET", args.entity, query);
 
         const { result, logout_status } = await withSession(env, caller, (get) => get(args.entity, query));
         const records = args.raw ? result.data : flatten(result.data);
