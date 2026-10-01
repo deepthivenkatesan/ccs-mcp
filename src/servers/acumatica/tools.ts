@@ -8,9 +8,9 @@
  *                         allow-listed query keys, User held to a field
  *                         allow-list (Password unreachable)
  *   3. credential       - the service account (SO Clerk + integration role +
- *                         branch access + Users screen SM201010). NOTE: its full
- *                         reach is not yet catalogued; Vendor (AP303000) is
- *                         known to be denied.
+ *                         branch access + Users screen SM201010 + Vendor
+ *                         AP303000, both granted by 1 Oct 2026). NOTE: its
+ *                         full reach is not yet catalogued.
  *
  * Business tools read ExtendedDefault 23.200.001; user tools read
  * SysAdminTestEndpoint 23.200.001 (decision 13). The passthrough is
@@ -106,7 +106,9 @@ type ListTool = {
 
 /**
  * One typed list tool per entity read successfully on 24 Sep 2026.
- * Vendor is absent on purpose: 403 on AP303000 for this service account.
+ * No Vendor tool yet: Vendor was denied on 24 Sep and became readable by
+ * 1 Oct 2026 (access granted by the owner). Until a typed tool exists,
+ * vendors are read through acumatica_request.
  */
 const LIST_TOOLS: ListTool[] = [
   {
@@ -132,7 +134,7 @@ const LIST_TOOLS: ListTool[] = [
   },
   {
     name: "acumatica_list_bills", title: "List Acumatica AP bills", entity: "Bill",
-    description: "List AP bills (what is owed to vendors). Returns type, reference number, vendor, vendor ref, dates, status, amount, balance and currency by default. Vendor records themselves are not readable by this account.",
+    description: "List AP bills (what is owed to vendors). Returns type, reference number, vendor, vendor ref, dates, status, amount, balance and currency by default. For the vendor records themselves, use acumatica_request with entity Vendor and a select.",
     defaults: ["Type", "ReferenceNbr", "Vendor", "VendorRef", "Date", "DueDate", "Status", "Amount", "Balance", "CurrencyID", "Description"],
   },
   {
@@ -198,7 +200,7 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
       description:
         `Read-only GET against any entity on Acumatica's ${BUSINESS} ${ENDPOINTS[BUSINESS].version} endpoint, for anything the ` +
         "typed list tools do not cover. Always pass select: full records are 1 to 2.5 KB each. " +
-        "Known limits on this instance: Vendor is denied (insufficient rights on AP303000); expand=Details " +
+        "Known limits on this instance: expand=Details " +
         "on SalesOrder returns a 500; filter and skip are not yet verified on this endpoint, so check that results " +
         "actually match what was asked. For users and roles, use acumatica_list_users and acumatica_get_user.",
       inputSchema: RequestInput,
@@ -326,7 +328,17 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
           ...(capped.note ? { roles_note: capped.note } : {}),
         });
       } catch (e) {
-        return err((e as Error).message);
+        const m = (e as Error).message;
+        // Acumatica answers an unknown key with 500 "No entity satisfies the
+        // condition." (verified 1 Oct 2026). Translate only that case, and
+        // never when logout also failed: that must stay visible as-is.
+        if (/No entity satisfies the condition/i.test(m) && !/logout ->/i.test(m)) {
+          return err(
+            `No Acumatica user with login "${args.login.trim()}". Check the spelling against ` +
+              `acumatica_list_users. (Acumatica: ${m})`,
+          );
+        }
+        return err(m);
       }
     },
   );

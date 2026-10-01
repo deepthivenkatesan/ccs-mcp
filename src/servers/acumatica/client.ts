@@ -18,7 +18,8 @@
  *  - Logout MUST carry Content-Length: 0. Without it IIS answers 411 and the
  *    session is NOT ended. A non-2xx logout is surfaced as an error here.
  *  - 403 body: {"message":"You have insufficient rights to access the
- *    <Entity> (<ScreenID>) form."}. Vendor (AP303000) is denied today.
+ *    <Entity> (<ScreenID>) form."}. Vendor (AP303000) was denied on 24 Sep;
+ *    access was granted to the service account by 1 Oct 2026.
  *  - 500 bodies carry message, exceptionMessage AND a full server stack
  *    trace. Only message and exceptionMessage are surfaced.
  *  - $select narrows the payload (Customer: 79% smaller). $expand=Details on
@@ -27,6 +28,8 @@
  *  - User (30 Sep): the entity has a Password field. Key lookup User/<Login>
  *    works. $expand=Roles in a LIST query -> 500 CannotOptimizeException.
  *    With $select present, Roles comes back only if "Roles" is in $select.
+ *    An unknown login (1 Oct) -> 500 "No entity satisfies the condition.",
+ *    not 404.
  *  - Query keys are sent with a literal "$" and commas unencoded, exactly as
  *    probed. URLSearchParams would send %24top, which was never tested.
  */
@@ -151,6 +154,9 @@ function assertUserQuery(query: Query, key?: string): void {
     if (!USER_SELECTABLE.has(f)) {
       throw new Error(`User field "${f}" is not permitted. Allowed: ${[...USER_SELECTABLE].join(", ")}.`);
     }
+  }
+  if (key === undefined && sel.includes("Roles")) {
+    throw new Error("Roles cannot be returned for a list of users. Use acumatica_get_user with a login for one user's assigned roles.");
   }
   if (query.$filter !== undefined) {
     throw new Error("$filter is not permitted on User. Use acumatica_get_user to read one user by login.");
