@@ -21,7 +21,10 @@
 		"ALLOWED_EMAIL_DOMAIN": "ccstechnologygroup.com",
 		"LIONGARD_BASE_URL": "https://us3.app.liongard.com",
 		"ACUMATICA_BASE_URL": "https://sunoilbahamas-sandbox.acumatica.com",
-		"ACUMATICA_TENANT": "FOCOL Holdings Ltd"
+		"ACUMATICA_TENANT": "FOCOL Holdings Ltd",
+		// Production stays on the service account until per-user sign-in is proven on
+		// staging and its own ACUMATICA_TOKENS_KV namespace exists (created at merge time).
+		"ACUMATICA_AUTH_MODE": "service"
 	},
 
 	// Named environments inherit NOTHING from the top level for `vars` and
@@ -37,7 +40,9 @@
 			// production's store.
 			"kv_namespaces": [
 				{ "binding": "OAUTH_KV", "id": "9011dd2f129f4851baf0054cac52bb26" },
-				{ "binding": "PENDING_AUTH_KV", "id": "8d929a012e8845048ccebf0c414f6c29" }
+				{ "binding": "PENDING_AUTH_KV", "id": "8d929a012e8845048ccebf0c414f6c29" },
+				// Per-person encrypted Acumatica tokens (CCS_MCP_STAGE_ACUMATICA_TOKENS_KV).
+				{ "binding": "ACUMATICA_TOKENS_KV", "id": "5ef51c5595664c768e1f170d285f8736" }
 			],
 
 			"vars": {
@@ -51,7 +56,9 @@
 				"ALLOWED_EMAIL_DOMAIN": "ccstechnologygroup.com",
 				"LIONGARD_BASE_URL": "https://us3.app.liongard.com",
 				"ACUMATICA_BASE_URL": "https://sunoilbahamas-sandbox.acumatica.com",
-				"ACUMATICA_TENANT": "FOCOL Holdings Ltd"
+				"ACUMATICA_TENANT": "FOCOL Holdings Ltd",
+				// Per-user sign-in (decision 1). Set to "service" to roll back to the service account.
+				"ACUMATICA_AUTH_MODE": "user"
 			}
 		}
 	}

@@ -20,19 +20,24 @@
  * STAGING EXPOSURE, ACCEPTED BY THE OWNER 1 OCT 2026: until per-user sign-in
  * exists, the user tools run as the service account, so anyone who can reach
  * the connector sees every user's email and role assignments. Production waits
- * for per-user sign-in.
+ * for per-user sign-in. In USER mode (ACUMATICA_AUTH_MODE=user) this no longer
+ * applies: every call runs as the signed-in person, so Acumatica decides what
+ * they see (decision 12).
  *
- * Every call is its own login -> GET -> logout. logout_status is reported on
- * every response so a Worker-side logout failure is visible immediately.
+ * Service mode: every call is its own login -> GET -> logout, and logout_status
+ * is reported so a Worker-side logout failure is visible immediately. User mode:
+ * the person's bearer token, no session, logout_status null. Every response
+ * carries `auth` (user | service) and, in user mode, `acumatica_login`.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Env } from "../../types";
 import { type McpProps, callerId } from "../../mcp/props";
 import {
-  withSession, flatten, assertReadOnly, NAME_RE, MAX_TOP,
+  withAcumatica, flatten, assertReadOnly, NAME_RE, MAX_TOP,
   BUSINESS, ADMIN, ENDPOINTS, USER_PROFILE_FIELDS, type Query,
 } from "./client";
+import { authMode, connectionStatus, disconnect } from "./oauth";
 import { ListInput, RequestInput, UserListInput, UserGetInput } from "./schemas";
 
 function ok(payload: unknown) {
@@ -153,13 +158,20 @@ const USER_LIST_DEFAULTS = ["Login", "FirstName", "LastName", "Email", "Status",
 
 export function registerAcumaticaTools(server: McpServer, env: Env, props: McpProps): void {
   const caller = callerId(props);
+  const who = { email: props.email, caller };
+  // Appended to every data tool's description, so the model knows what a connect link means.
+  const AUTH_NOTE = authMode(env) === "user"
+    ? " Runs as the signed-in person's own Acumatica account, so results reflect their roles. If they have " +
+      "not connected their Acumatica account yet, the reply contains a one-time link: show it to them as-is and " +
+      "ask them to open it, sign in, then retry."
+    : "";
 
   for (const t of LIST_TOOLS) {
     server.registerTool(
       t.name,
       {
         title: t.title,
-        description: t.description + LIST_SUFFIX,
+        description: t.description + LIST_SUFFIX + AUTH_NOTE,
         inputSchema: ListInput,
         annotations: READ_ONLY,
       },
@@ -173,7 +185,7 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
           // Refuse BEFORE logging in: a refused request must not cost a trial slot.
           assertReadOnly("GET", BUSINESS, t.entity, query);
 
-          const { result, logout_status } = await withSession(env, caller, (get) => get<unknown[]>(BUSINESS, t.entity, query));
+          const { result, logout_status, ...authInfo } = await withAcumatica(env, who, (get) => get<unknown[]>(BUSINESS, t.entity, query));
           const records = flatten(result.data);
           const fetched = Array.isArray(records) ? records.length : 0;
           return ok({
@@ -184,6 +196,7 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
             fields: select ?? "all",
             upstream_kb: Math.round((result.bytes / 1024) * 10) / 10,
             logout_status,
+            ...authInfo,
             ...capRecords(records, clampKb(args.max_kb)),
           });
         } catch (e) {
@@ -202,7 +215,7 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
         "typed list tools do not cover. Always pass select: full records are 1 to 2.5 KB each. " +
         "Known limits on this instance: expand=Details " +
         "on SalesOrder returns a 500; filter and skip are not yet verified on this endpoint, so check that results " +
-        "actually match what was asked. For users and roles, use acumatica_list_users and acumatica_get_user.",
+        "actually match what was asked. For users and roles, use acumatica_list_users and acumatica_get_user." + AUTH_NOTE,
       inputSchema: RequestInput,
       annotations: READ_ONLY,
     },
@@ -217,7 +230,7 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
         // Refuse BEFORE logging in: a refused request must not cost a trial slot.
         assertReadOnly("GET", BUSINESS, args.entity, query);
 
-        const { result, logout_status } = await withSession(env, caller, (get) => get(BUSINESS, args.entity, query));
+        const { result, logout_status, ...authInfo } = await withAcumatica(env, who, (get) => get(BUSINESS, args.entity, query));
         const records = args.raw ? result.data : flatten(result.data);
         const fetched = Array.isArray(records) ? records.length : null;
         return ok({
@@ -228,6 +241,7 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
           ...(args.filter ? { filter_verified: false, filter_note: "$filter is not yet verified on ExtendedDefault: confirm the records match." } : {}),
           upstream_kb: Math.round((result.bytes / 1024) * 10) / 10,
           logout_status,
+          ...authInfo,
           ...capRecords(records, clampKb(args.max_kb)),
         });
       } catch (e) {
@@ -244,7 +258,7 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
         "List Acumatica user accounts: login, first and last name, email, status, user type and guest flag by default. " +
         "Roles are NOT included, because Acumatica cannot return roles for a list of users: call acumatica_get_user " +
         "with a login for one user's assigned roles. Password is never returned. Records come back in Acumatica's " +
-        "default order; the sandbox has at least 100 users, so possibly_more will often be true.",
+        "default order; the sandbox has at least 100 users, so possibly_more will often be true." + AUTH_NOTE,
       inputSchema: UserListInput,
       annotations: READ_ONLY,
     },
@@ -257,7 +271,7 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
         // Refuse BEFORE logging in. The guard holds User to its field allow-list.
         assertReadOnly("GET", ADMIN, "User", query);
 
-        const { result, logout_status } = await withSession(env, caller, (get) => get<unknown[]>(ADMIN, "User", query));
+        const { result, logout_status, ...authInfo } = await withAcumatica(env, who, (get) => get<unknown[]>(ADMIN, "User", query));
         const records = flatten(result.data);
         const fetched = Array.isArray(records) ? records.length : 0;
         return ok({
@@ -269,6 +283,7 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
           fields: select,
           upstream_kb: Math.round((result.bytes / 1024) * 10) / 10,
           logout_status,
+          ...authInfo,
           ...capRecords(records, clampKb(args.max_kb)),
         });
       } catch (e) {
@@ -284,7 +299,7 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
       description:
         "One Acumatica user's profile and the roles assigned to them, by login. Returns only assigned roles " +
         "(role name and description): Acumatica returns every role in the system with a Selected flag, so " +
-        "unassigned rows are dropped and counted. Password is never returned. Use acumatica_list_users to find a login.",
+        "unassigned rows are dropped and counted. Password is never returned. Use acumatica_list_users to find a login." + AUTH_NOTE,
       inputSchema: UserGetInput,
       annotations: READ_ONLY,
     },
@@ -295,7 +310,7 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
         // Refuse BEFORE logging in: bad logins and disallowed shapes never reach Acumatica.
         assertReadOnly("GET", ADMIN, "User", query, login);
 
-        const { result, logout_status } = await withSession(env, caller, (get) => get(ADMIN, "User", query, login));
+        const { result, logout_status, ...authInfo } = await withAcumatica(env, who, (get) => get(ADMIN, "User", query, login));
         const record = flatten(result.data);
         if (!record || typeof record !== "object" || Array.isArray(record)) {
           throw new Error(`Acumatica returned an unexpected shape for user ${login}: expected one record.`);
@@ -320,6 +335,7 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
           login,
           upstream_kb: Math.round((result.bytes / 1024) * 10) / 10,
           logout_status,
+          ...authInfo,
           role_rows_total: Roles.length,
           roles_assigned: assigned.length,
           profile,
@@ -339,6 +355,49 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
           );
         }
         return err(m);
+      }
+    },
+  );
+
+  // ---- Per-user sign-in management (user mode only) ----
+  if (authMode(env) !== "user") return;
+
+  server.registerTool(
+    "acumatica_connection_status",
+    {
+      title: "Acumatica connection status",
+      description:
+        "Which Acumatica account the signed-in person is connected as, and whether that connection works right now. " +
+        "If they are not connected, returns a one-time link to connect: show it to them as-is.",
+      inputSchema: {},
+      annotations: READ_ONLY,
+    },
+    async () => {
+      try {
+        return ok({ auth: "user", ...(await connectionStatus(env, props.email)) });
+      } catch (e) {
+        return err((e as Error).message);
+      }
+    },
+  );
+
+  server.registerTool(
+    "acumatica_disconnect",
+    {
+      title: "Disconnect Acumatica account",
+      description:
+        "Disconnect the signed-in person's Acumatica account from this connector: revokes their Acumatica tokens, " +
+        "confirms they no longer work, and removes the link. Only call this when the person asks to disconnect or " +
+        "says the linked account is not theirs. They can reconnect later through a new link.",
+      inputSchema: {},
+      // Changes gateway state and revokes the person's own tokens; touches no Acumatica data.
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    },
+    async () => {
+      try {
+        return ok({ auth: "user", ...(await disconnect(env, props.email)) });
+      } catch (e) {
+        return err((e as Error).message);
       }
     },
   );

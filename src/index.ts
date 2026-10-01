@@ -25,6 +25,12 @@ import { handleSdkMcpRequest, type SdkServerFactory } from "./mcp/sdkBridge";
 import { createSelftestServer } from "./servers/selftest/server";
 import { createLiongardServer } from "./servers/liongard/server";
 import { createAcumaticaServer } from "./servers/acumatica/server";
+import {
+  handleStart as handleAcumaticaStart,
+  handleCallback as handleAcumaticaCallback,
+  START_PATH as ACUMATICA_START_PATH,
+  CALLBACK_PATH as ACUMATICA_CALLBACK_PATH,
+} from "./servers/acumatica/oauth";
 
 // ---------- The registry ----------
 
@@ -72,7 +78,7 @@ const REGISTRY: ConnectorEntry[] = [
     path: "/acumatica",
     kind: "sdk",
     description:
-      "Acumatica ERP (FOCOL / Sun Oil sandbox), read-only. Customers, stock items, sales orders, invoices, bills and purchase orders.",
+      "Acumatica ERP (FOCOL / Sun Oil sandbox), read-only. Customers, stock items, sales orders, invoices, bills, purchase orders, vendors (via request), and users with their roles. Runs as each person's own Acumatica account when ACUMATICA_AUTH_MODE=user.",
     createServer: createAcumaticaServer,
   },
 ];
@@ -89,6 +95,13 @@ const defaultHandler: ExportedHandler<Env> = {
 
     if (url.pathname === "/authorize") return handleAuthorize(request, env);
     if (url.pathname === "/callback") return handleCallback(request, env);
+
+    // Per-user Acumatica sign-in. Deliberately OUTSIDE /acumatica: every path under a
+    // connector path is a protected API route, so Acumatica's redirect could not land
+    // there (verified: GET /acumatica/oauth/callback -> 401). The start link is bound to
+    // a person by a single-use ticket; see servers/acumatica/oauth.ts.
+    if (url.pathname === ACUMATICA_START_PATH) return handleAcumaticaStart(request, env);
+    if (url.pathname === ACUMATICA_CALLBACK_PATH) return handleAcumaticaCallback(request, env);
 
     // Unauthenticated, deliberately. Answers "is the Worker up and did the
     // registry load" in one request, and says which slot you are talking to.

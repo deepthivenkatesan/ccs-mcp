@@ -57,4 +57,18 @@ export interface Env {
   // the read-only ceiling at Acumatica.
   ACUMATICA_USERNAME: string;
   ACUMATICA_PASSWORD: string;
+
+  // ---- Acumatica per-user sign-in (decision 1; servers/acumatica/oauth.ts) ----
+  // Var. "user" = each person's own OAuth token; anything else = the service account above.
+  ACUMATICA_AUTH_MODE?: string;
+  // Secrets. The SM303010 connected application "CCS MCP Gateway", from
+  // /root/.ccs-creds/acumatica-oauth on the host. One app serves both Workers (decision 15).
+  ACUMATICA_OAUTH_CLIENT_ID?: string;
+  ACUMATICA_OAUTH_CLIENT_SECRET?: string;
+  // Secret. Base64 of 32 random bytes (AES-256-GCM key for stored tokens), from
+  // /root/.ccs-creds/acumatica-token-key. Rotating it disconnects everyone.
+  ACUMATICA_TOKEN_KEY?: string;
+  // Per-person encrypted token records. Staging only so far; production's namespace is
+  // created at merge time. Optional so user mode can refuse clearly when it is missing.
+  ACUMATICA_TOKENS_KV?: KVNamespace;
 }

@@ -7,7 +7,13 @@
  * Probe results and error vocabulary: MCP Platform book, page
  * "Acumatica (in progress)".
  *
- * Auth is a COOKIE SESSION: POST /entity/auth/login {name,password,tenant},
+ * Two sign-in modes, chosen by the ACUMATICA_AUTH_MODE var (see withAcumatica):
+ *   - user (decision 1): each person's own OAuth bearer token from oauth.ts. No
+ *     session, so no login or logout; Acumatica enforces that person's roles.
+ *   - service: the shared service account's COOKIE SESSION, below. Kept as a
+ *     rollback switch until per-user sign-in is proven.
+ *
+ * Service mode: POST /entity/auth/login {name,password,tenant},
  * then send the returned cookies, then POST /entity/auth/logout. The sandbox
  * is in trial mode with TWO concurrent users, so an orphaned session can lock
  * real people out. Every call therefore runs inside withSession(), which logs
@@ -35,6 +41,7 @@
  */
 
 import type { Env } from "../../types";
+import { authMode, accessTokenFor, type AuthMode } from "./oauth";
 
 export type EndpointName = "ExtendedDefault" | "SysAdminTestEndpoint";
 
@@ -244,6 +251,79 @@ export type AcuGet = <T = unknown>(
   key?: string,
 ) => Promise<{ data: T; bytes: number }>;
 
+/** A non-2xx answer from Acumatica, with its status, so callers can react to a 401. */
+export class UpstreamError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+/**
+ * One guarded GET, shared by both sign-in modes. Only the auth headers differ:
+ * a session cookie (service mode) or the person's bearer token (user mode).
+ */
+function makeGet(base: string, authHeaders: Record<string, string>): AcuGet {
+  return async <T,>(endpoint: EndpointName, entity: string, query: Query, key?: string) => {
+    assertReadOnly("GET", endpoint, entity, query, key);
+    const rule = ENDPOINTS[endpoint];
+    const target = key === undefined ? entity : `${entity}/${encodeURIComponent(key)}`;
+    const path = `/entity/${endpoint}/${rule.version}/${target}${buildQuery(query)}`;
+    const label = key === undefined ? entity : `${entity} ${key}`;
+    const res = await fetch(`${base}${path}`, {
+      method: "GET",
+      headers: { ...authHeaders, Accept: "application/json" },
+      signal: AbortSignal.timeout(GET_TIMEOUT_MS),
+    });
+    const declared = Number(res.headers.get("content-length") ?? NaN);
+    if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
+      await res.body?.cancel();
+      throw new Error(
+        `Acumatica GET ${label} declared ${Math.round(declared / 1024)} KB, over the ` +
+          `${MAX_RESPONSE_BYTES / 1024 / 1024} MB ceiling, so it was refused without being read. Lower top or use select.`,
+      );
+    }
+    const text = await res.text();
+    if (!res.ok) throw new UpstreamError(`Acumatica GET ${label} -> ${res.status}: ${upstreamMessage(text)}`, res.status);
+    const bytes = new TextEncoder().encode(text).length;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error(`Acumatica GET ${label} returned non-JSON (${bytes} bytes)`);
+    }
+    return { data: stripPasswords(parsed) as T, bytes };
+  };
+}
+
+export type AuthInfo = { auth: AuthMode; acumatica_login?: string };
+
+/**
+ * Run fn as the right Acumatica identity. User mode (decision 1): the person's own
+ * bearer token; no session, so no login or logout. On a 401, refresh once and retry.
+ * Service mode: the shared service account's cookie session, kept as a rollback switch.
+ */
+export async function withAcumatica<R>(
+  env: Env,
+  who: { email: string; caller: string },
+  fn: (get: AcuGet) => Promise<R>,
+): Promise<{ result: R; logout_status: number | null } & AuthInfo> {
+  if (authMode(env) === "service") {
+    const { result, logout_status } = await withSession(env, who.caller, fn);
+    return { result, logout_status, auth: "service" };
+  }
+  const base = env.ACUMATICA_BASE_URL.replace(/\/+$/, "");
+  let { token, login } = await accessTokenFor(env, who.email);
+  try {
+    const result = await fn(makeGet(base, { Authorization: `Bearer ${token}` }));
+    return { result, logout_status: null, auth: "user", acumatica_login: login };
+  } catch (e) {
+    if (!(e instanceof UpstreamError) || e.status !== 401) throw e;
+    ({ token, login } = await accessTokenFor(env, who.email, true));
+    const result = await fn(makeGet(base, { Authorization: `Bearer ${token}` }));
+    return { result, logout_status: null, auth: "user", acumatica_login: login };
+  }
+}
+
 /**
  * Log in, run fn, and ALWAYS log out. A failed logout is an error even when
  * the read succeeded, because it may leave a trial slot occupied.
@@ -272,36 +352,7 @@ export async function withSession<R>(
   const cookies = cookieHeader(login);
   await login.body?.cancel();
 
-  const get: AcuGet = async <T,>(endpoint: EndpointName, entity: string, query: Query, key?: string) => {
-    assertReadOnly("GET", endpoint, entity, query, key);
-    const rule = ENDPOINTS[endpoint];
-    const target = key === undefined ? entity : `${entity}/${encodeURIComponent(key)}`;
-    const path = `/entity/${endpoint}/${rule.version}/${target}${buildQuery(query)}`;
-    const label = key === undefined ? entity : `${entity} ${key}`;
-    const res = await fetch(`${base}${path}`, {
-      method: "GET",
-      headers: { Cookie: cookies, Accept: "application/json" },
-      signal: AbortSignal.timeout(GET_TIMEOUT_MS),
-    });
-    const declared = Number(res.headers.get("content-length") ?? NaN);
-    if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
-      await res.body?.cancel();
-      throw new Error(
-        `Acumatica GET ${label} declared ${Math.round(declared / 1024)} KB, over the ` +
-          `${MAX_RESPONSE_BYTES / 1024 / 1024} MB ceiling, so it was refused without being read. Lower top or use select.`,
-      );
-    }
-    const text = await res.text();
-    if (!res.ok) throw new Error(`Acumatica GET ${label} -> ${res.status}: ${upstreamMessage(text)}`);
-    const bytes = new TextEncoder().encode(text).length;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      throw new Error(`Acumatica GET ${label} returned non-JSON (${bytes} bytes)`);
-    }
-    return { data: stripPasswords(parsed) as T, bytes };
-  };
+  const get = makeGet(base, { Cookie: cookies });
 
   let result: R | undefined;
   let readError: unknown;
