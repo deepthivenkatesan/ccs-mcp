@@ -16,7 +16,7 @@ import { registerAcumaticaTools } from "./tools";
 export function createAcumaticaServer(env: Env, props: McpProps): McpServer {
   const server = new McpServer({
     name: "acumatica",
-    version: "0.1.0",
+    version: "0.2.0",
   });
   registerAcumaticaTools(server, env, props);
   return server;

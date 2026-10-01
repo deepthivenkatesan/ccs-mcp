@@ -1,18 +1,26 @@
 /**
- * Acumatica MCP tools: read-only business data from the FOCOL / Sun Oil sandbox.
+ * Acumatica MCP tools: read-only data from the FOCOL / Sun Oil sandbox.
  *
  * READ-ONLY THREE LAYERS DEEP:
  *   1. registry subset  - only list/read tools are registered here
- *   2. transport guard  - client.assertReadOnly(): GET only, one endpoint and
- *                         version, a plain entity name, allow-listed query keys
+ *   2. transport guard  - client.assertReadOnly(): GET only, only the two
+ *                         endpoints in client.ENDPOINTS, a plain entity name,
+ *                         allow-listed query keys, User held to a field
+ *                         allow-list (Password unreachable)
  *   3. credential       - the service account (SO Clerk + integration role +
- *                         branch access). NOTE: its full reach is not yet
- *                         catalogued; Vendor (AP303000) is known to be denied.
+ *                         branch access + Users screen SM201010). NOTE: its full
+ *                         reach is not yet catalogued; Vendor (AP303000) is
+ *                         known to be denied.
  *
- * Typed tools exist only for entities read successfully in the 24 Sep 2026
- * probe. Everything else goes through acumatica_request. Default field sets
- * use names seen in probe output, except where marked "general knowledge"
- * below; those are verified by the staging ladder, one call per tool.
+ * Business tools read ExtendedDefault 23.200.001; user tools read
+ * SysAdminTestEndpoint 23.200.001 (decision 13). The passthrough is
+ * ExtendedDefault only: User is reachable solely through the two typed user
+ * tools, so its shape is fixed.
+ *
+ * STAGING EXPOSURE, ACCEPTED BY THE OWNER 1 OCT 2026: until per-user sign-in
+ * exists, the user tools run as the service account, so anyone who can reach
+ * the connector sees every user's email and role assignments. Production waits
+ * for per-user sign-in.
  *
  * Every call is its own login -> GET -> logout. logout_status is reported on
  * every response so a Worker-side logout failure is visible immediately.
@@ -21,8 +29,11 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Env } from "../../types";
 import { type McpProps, callerId } from "../../mcp/props";
-import { withSession, flatten, assertReadOnly, NAME_RE, MAX_TOP, ENDPOINT, VERSION, type Query } from "./client";
-import { ListInput, RequestInput } from "./schemas";
+import {
+  withSession, flatten, assertReadOnly, NAME_RE, MAX_TOP,
+  BUSINESS, ADMIN, ENDPOINTS, USER_PROFILE_FIELDS, type Query,
+} from "./client";
+import { ListInput, RequestInput, UserListInput, UserGetInput } from "./schemas";
 
 function ok(payload: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }] };
@@ -132,8 +143,11 @@ const LIST_TOOLS: ListTool[] = [
 ];
 
 const LIST_SUFFIX =
-  " Records come back in Acumatica's default order. No filtering yet: $filter is not verified on this " +
-  "instance. For other entities or query options, use acumatica_request.";
+  " Records come back in Acumatica's default order. No filtering yet: $filter is not verified on the " +
+  "ExtendedDefault endpoint. For other entities or query options, use acumatica_request.";
+
+/** Default fields for acumatica_list_users: identity and status, no settings flags. */
+const USER_LIST_DEFAULTS = ["Login", "FirstName", "LastName", "Email", "Status", "UserType", "GuestAccount"];
 
 export function registerAcumaticaTools(server: McpServer, env: Env, props: McpProps): void {
   const caller = callerId(props);
@@ -155,9 +169,9 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
           const query: Query = { $top: String(top) };
           if (select) query.$select = select.join(",");
           // Refuse BEFORE logging in: a refused request must not cost a trial slot.
-          assertReadOnly("GET", t.entity, query);
+          assertReadOnly("GET", BUSINESS, t.entity, query);
 
-          const { result, logout_status } = await withSession(env, caller, (get) => get<unknown[]>(t.entity, query));
+          const { result, logout_status } = await withSession(env, caller, (get) => get<unknown[]>(BUSINESS, t.entity, query));
           const records = flatten(result.data);
           const fetched = Array.isArray(records) ? records.length : 0;
           return ok({
@@ -182,11 +196,11 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
     {
       title: "Acumatica read-only request",
       description:
-        `Read-only GET against any entity on Acumatica's ${ENDPOINT} ${VERSION} endpoint, for anything the ` +
+        `Read-only GET against any entity on Acumatica's ${BUSINESS} ${ENDPOINTS[BUSINESS].version} endpoint, for anything the ` +
         "typed list tools do not cover. Always pass select: full records are 1 to 2.5 KB each. " +
         "Known limits on this instance: Vendor is denied (insufficient rights on AP303000); expand=Details " +
-        "on SalesOrder returns a 500; filter and skip are not yet verified, so check that results actually " +
-        "match what was asked. Users, roles and access rights are not exposed by this endpoint.",
+        "on SalesOrder returns a 500; filter and skip are not yet verified on this endpoint, so check that results " +
+        "actually match what was asked. For users and roles, use acumatica_list_users and acumatica_get_user.",
       inputSchema: RequestInput,
       annotations: READ_ONLY,
     },
@@ -199,9 +213,9 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
         if (args.expand) query.$expand = args.expand;
         if (args.skip !== undefined) query.$skip = String(args.skip);
         // Refuse BEFORE logging in: a refused request must not cost a trial slot.
-        assertReadOnly("GET", args.entity, query);
+        assertReadOnly("GET", BUSINESS, args.entity, query);
 
-        const { result, logout_status } = await withSession(env, caller, (get) => get(args.entity, query));
+        const { result, logout_status } = await withSession(env, caller, (get) => get(BUSINESS, args.entity, query));
         const records = args.raw ? result.data : flatten(result.data);
         const fetched = Array.isArray(records) ? records.length : null;
         return ok({
@@ -209,10 +223,107 @@ export function registerAcumaticaTools(server: McpServer, env: Env, props: McpPr
           query,
           fetched,
           possibly_more: fetched === args.top,
-          ...(args.filter ? { filter_verified: false, filter_note: "$filter is not yet verified on this instance: confirm the records match." } : {}),
+          ...(args.filter ? { filter_verified: false, filter_note: "$filter is not yet verified on ExtendedDefault: confirm the records match." } : {}),
           upstream_kb: Math.round((result.bytes / 1024) * 10) / 10,
           logout_status,
           ...capRecords(records, clampKb(args.max_kb)),
+        });
+      } catch (e) {
+        return err((e as Error).message);
+      }
+    },
+  );
+
+  server.registerTool(
+    "acumatica_list_users",
+    {
+      title: "List Acumatica users",
+      description:
+        "List Acumatica user accounts: login, first and last name, email, status, user type and guest flag by default. " +
+        "Roles are NOT included, because Acumatica cannot return roles for a list of users: call acumatica_get_user " +
+        "with a login for one user's assigned roles. Password is never returned. Records come back in Acumatica's " +
+        "default order; the sandbox has at least 100 users, so possibly_more will often be true.",
+      inputSchema: UserListInput,
+      annotations: READ_ONLY,
+    },
+    async (args) => {
+      try {
+        const top = clampTop(args.top);
+        const select = args.fields?.length ? args.fields : USER_LIST_DEFAULTS;
+        checkFields(select);
+        const query: Query = { $top: String(top), $select: select.join(",") };
+        // Refuse BEFORE logging in. The guard holds User to its field allow-list.
+        assertReadOnly("GET", ADMIN, "User", query);
+
+        const { result, logout_status } = await withSession(env, caller, (get) => get<unknown[]>(ADMIN, "User", query));
+        const records = flatten(result.data);
+        const fetched = Array.isArray(records) ? records.length : 0;
+        return ok({
+          entity: "User",
+          endpoint: ADMIN,
+          requested_top: top,
+          fetched,
+          possibly_more: fetched === top,
+          fields: select,
+          upstream_kb: Math.round((result.bytes / 1024) * 10) / 10,
+          logout_status,
+          ...capRecords(records, clampKb(args.max_kb)),
+        });
+      } catch (e) {
+        return err((e as Error).message);
+      }
+    },
+  );
+
+  server.registerTool(
+    "acumatica_get_user",
+    {
+      title: "Get an Acumatica user and their roles",
+      description:
+        "One Acumatica user's profile and the roles assigned to them, by login. Returns only assigned roles " +
+        "(role name and description): Acumatica returns every role in the system with a Selected flag, so " +
+        "unassigned rows are dropped and counted. Password is never returned. Use acumatica_list_users to find a login.",
+      inputSchema: UserGetInput,
+      annotations: READ_ONLY,
+    },
+    async (args) => {
+      try {
+        const login = args.login.trim();
+        const query: Query = { $expand: "Roles", $select: [...USER_PROFILE_FIELDS, "Roles"].join(",") };
+        // Refuse BEFORE logging in: bad logins and disallowed shapes never reach Acumatica.
+        assertReadOnly("GET", ADMIN, "User", query, login);
+
+        const { result, logout_status } = await withSession(env, caller, (get) => get(ADMIN, "User", query, login));
+        const record = flatten(result.data);
+        if (!record || typeof record !== "object" || Array.isArray(record)) {
+          throw new Error(`Acumatica returned an unexpected shape for user ${login}: expected one record.`);
+        }
+        const { Roles, ...profile } = record as Record<string, unknown>;
+        if (!Array.isArray(Roles)) {
+          throw new Error(
+            `Acumatica returned user ${login} without a Roles detail, so assigned roles cannot be shown. ` +
+              "This is the silent-omission behaviour recorded on the wiki; tell the connector owner.",
+          );
+        }
+        const assigned = Roles
+          .filter((r) => (r as Record<string, unknown>)?.Selected === true)
+          .map((r) => {
+            const o = r as Record<string, unknown>;
+            return { RoleName: o.RoleName, RoleDescription: o.RoleDescription };
+          });
+        const capped = capRecords(assigned, clampKb(args.max_kb));
+        return ok({
+          entity: "User",
+          endpoint: ADMIN,
+          login,
+          upstream_kb: Math.round((result.bytes / 1024) * 10) / 10,
+          logout_status,
+          role_rows_total: Roles.length,
+          roles_assigned: assigned.length,
+          profile,
+          roles: capped.records,
+          roles_truncated: capped.truncated,
+          ...(capped.note ? { roles_note: capped.note } : {}),
         });
       } catch (e) {
         return err((e as Error).message);

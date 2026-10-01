@@ -3,9 +3,11 @@
  * z.coerce.number() on numerics, .optional() on optionals.
  *
  * Acumatica vocabulary used in descriptions so a tech's words map to tools:
- *   entity   = a contract-API object (Customer, SalesOrder, Bill, ...)
+ *   entity   = a contract-API object (Customer, SalesOrder, Bill, User, ...)
  *   field    = a property of an entity, as named in the API (CustomerID)
- *   endpoint = ExtendedDefault 23.200.001, the only one this server reads
+ *   endpoint = ExtendedDefault 23.200.001 for business data;
+ *              SysAdminTestEndpoint 23.200.001 for User only
+ *   login    = a user's Acumatica login name, the key of the User entity
  */
 
 import { z } from "zod";
@@ -21,15 +23,33 @@ const maxKb = z.coerce.number().int().optional()
 
 export const ListInput = { top, fields, all_fields: allFields, max_kb: maxKb };
 
+export const UserListInput = {
+  top,
+  fields: z.array(z.string()).optional()
+    .describe(
+      "User fields to return. Omit for the default set (Login, FirstName, LastName, Email, Status, UserType, GuestAccount). " +
+        "Allowed: Login, FirstName, LastName, Email, Status, UserType, GuestAccount, LinkedEntity, LinkedEntityContact, " +
+        "MaxNumberofConcurrentLogins, PasswordNeverExpires, AllowPasswordChanges, AllowPasswordRecovery, " +
+        "ForceUsertoChangePasswordonNextLogin, Comment. Password is never available.",
+    ),
+  max_kb: maxKb,
+};
+
+export const UserGetInput = {
+  login: z.string()
+    .describe("The user's Acumatica login name, exactly as shown by acumatica_list_users. Letters, digits and . _ @ - only."),
+  max_kb: maxKb,
+};
+
 export const RequestInput = {
   entity: z.string()
-    .describe("Entity name under ExtendedDefault 23.200.001, e.g. 'Customer', 'StockItem', 'SalesOrder'. A single name only: no keys, slashes or actions."),
+    .describe("Entity name under ExtendedDefault 23.200.001, e.g. 'Customer', 'StockItem', 'SalesOrder'. A single name only: no keys, slashes or actions. Not for users: use acumatica_list_users or acumatica_get_user."),
   top: z.coerce.number().int()
     .describe("Required. Records to return, 1 to 100."),
   select: z.string().optional()
     .describe("Comma-separated field names ($select). Strongly recommended: it cut Customer by 79% in testing."),
   filter: z.string().optional()
-    .describe("OData $filter, e.g. \"Status eq 'Active'\". NOT YET VERIFIED to filter on this instance: check the results actually match."),
+    .describe("OData $filter, e.g. \"Status eq 'Active'\". NOT YET VERIFIED to filter on ExtendedDefault: check the results actually match."),
   expand: z.string().optional()
     .describe("OData $expand. Known to fail: 'Details' on SalesOrder returns a 500 today."),
   skip: z.coerce.number().int().optional()
